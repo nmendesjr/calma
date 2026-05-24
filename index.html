@@ -1369,9 +1369,10 @@ function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSa
     return interests.flatMap(interest =>
       (INTEREST_FEEDS[interest] || []).flatMap(f => {
         const live = liveArticles && liveArticles[f.id];
+        const fallbackUrl = 'https://' + f.domain;
         const articles = live
           ? live.items.map(a => ({ ...a, feedName: f.name, interest }))
-          : f.articles.map(a => ({ ...a, feedName: f.name, interest }));
+          : f.articles.map(a => ({ ...a, feedName: f.name, interest, link: a.link || fallbackUrl }));
         return articles;
       })
     ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i).slice(0, 12);
@@ -1942,9 +1943,10 @@ function DiscoverScreen({ interests, savedRss, onSaveRss, liveArticles, feedsLoa
     return (interests || []).flatMap(interest =>
       (INTEREST_FEEDS[interest] || []).flatMap(feed => {
         const live = liveArticles && liveArticles[feed.id];
+        const fallbackUrl = 'https://' + feed.domain;
         const articles = live
-          ? live.items.map(a => ({ ...a, interest, feedName: feed.name }))
-          : (feed.articles || []).map(a => ({ ...a, interest, feedName: feed.name }));
+          ? live.items.map(a => ({ ...a, interest, feedName: feed.name, feedDomain: feed.domain }))
+          : (feed.articles || []).map(a => ({ ...a, interest, feedName: feed.name, feedDomain: feed.domain, link: a.link || fallbackUrl }));
         return articles;
       })
     ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i);
