@@ -866,6 +866,112 @@ const INTEREST_FEEDS = {
   ],
 };
 
+// ─── RSS FEED URLS ────────────────────────────────────────────────────────────
+const FEED_URLS = {
+  'aeon':             'https://aeon.co/feed.rss',
+  'hedgehog-review':  'https://hedgehogreview.com/feed',
+  'philosophy-now':   'https://philosophynow.org/rss',
+  'the-point':        'https://thepointmag.com/feed/',
+  'paris-review':     'https://www.theparisreview.org/feed',
+  'lapham':           'https://www.laphamsquarterly.org/rss.xml',
+  'nplusoone':        'https://nplusonemag.com/feed/',
+  'kenyon-review':    'https://kenyonreview.org/feed/',
+  'quanta':           'https://www.quantamagazine.org/feed',
+  'psyche':           'https://psyche.co/feed',
+  'marginalia':       'https://www.themarginalian.org/feed/',
+  'longreads':        'https://longreads.com/feed/',
+  'jstor-daily':      'https://daily.jstor.org/feed/',
+  'aeon-history':     'https://aeon.co/feed.rss',
+  'aeon-language':    'https://aeon.co/feed.rss',
+  'wellbeing-aeon':   'https://aeon.co/feed.rss',
+  'emergence':        'https://emergencemagazine.org/feed/',
+  'emergence-nature': 'https://emergencemagazine.org/feed/',
+  'hakai':            'https://hakaimagazine.com/feed/',
+  'nautilus':         'https://nautil.us/feed/',
+  'knowable':         'https://knowablemagazine.org/rss',
+  'orion':            'https://orionmagazine.org/feed/',
+  'electric-lit':     'https://electricliterature.com/feed/',
+  'the-millions':     'https://themillions.com/feed',
+  'poetry-foundation':'https://www.poetryfoundation.org/feeds/main',
+  'pitchfork':        'https://pitchfork.com/feed/feed-everything/atom/',
+  'rogerebert':       'https://www.rogerebert.com/feed',
+  'art-in-america':   'https://www.artnews.com/feed/',
+  'vittles':          'https://vittles.substack.com/feed/',
+  'roads-kingdoms':   'https://roadsandkingdoms.com/feed/',
+  'stat-news':        'https://www.statnews.com/feed/',
+  'dezeen':           'https://www.dezeen.com/feed/',
+  'new-statesman':    'https://www.newstatesman.com/feed/',
+  'language-log':     'https://languagelog.ldc.upenn.edu/nll/?feed=atom',
+};
+
+const RSS_PROXY = 'https://api.rss2json.com/v1/api.json';
+const RSS_TTL   = 3600000; // 1 hour cache
+
+function stripHtml(html = '') {
+  return html.replace(/<[^>]*>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+async function fetchFeed(feedId, url) {
+  const cacheKey = `calma_feed_${feedId}`;
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+    if (cached && Date.now() - cached.ts < RSS_TTL) return cached.items;
+  } catch {}
+
+  try {
+    const res = await fetch(`${RSS_PROXY}?rss_url=${encodeURIComponent(url)}&count=8`);
+    const data = await res.json();
+    if (data.status !== 'ok' || !data.items?.length) return null;
+
+    const items = data.items.map((item, i) => {
+      const body = stripHtml(item.content || item.description || '');
+      const excerpt = body.slice(0, 240).trim() + (body.length > 240 ? '…' : '');
+      const minutes = Math.max(3, Math.round(body.split(/\s+/).length / 200));
+      return {
+        id: `live-${feedId}-${i}`,
+        title: (item.title || 'Untitled').replace(/&amp;/g, '&').replace(/&#8217;/g, "'").replace(/&#8220;/g, '"').replace(/&#8221;/g, '"'),
+        author: item.author || data.feed?.title || '',
+        excerpt,
+        link: item.link || '',
+        pubDate: item.pubDate || '',
+        minutes,
+      };
+    });
+
+    try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), items })); } catch {}
+    return items;
+  } catch {
+    return null;
+  }
+}
+
+function useLiveFeeds(interests) {
+  const [liveArticles, setLiveArticles] = React.useState({});
+  const [feedsLoading, setFeedsLoading] = React.useState(false);
+  React.useEffect(() => {
+    if (!interests?.length) return;
+    const toFetch = interests.flatMap(interest =>
+      (INTEREST_FEEDS[interest] || [])
+        .filter(feed => FEED_URLS[feed.id])
+        .map(feed => ({ feedId: feed.id, url: FEED_URLS[feed.id], interest }))
+    ).filter((f, i, arr) => arr.findIndex(x => x.feedId === f.feedId) === i);
+    if (!toFetch.length) return;
+    setFeedsLoading(true);
+    Promise.all(toFetch.map(async ({ feedId, url, interest }) => {
+      const items = await fetchFeed(feedId, url);
+      return { feedId, interest, items };
+    })).then(results => {
+      const map = {};
+      for (const { feedId, interest, items } of results) {
+        if (items) map[feedId] = { interest, items };
+      }
+      setLiveArticles(map);
+      setFeedsLoading(false);
+    });
+  }, [(interests || []).join(',')]);
+  return { liveArticles, feedsLoading };
+}
+
 // ─── HOOKS ────────────────────────────────────────────────────────────────────
 function useLocalStorage(key, initial) {
   const [val, setVal] = React.useState(() => {
@@ -1250,17 +1356,22 @@ function MobileNav({ view, setView }) {
 }
 
 // ─── LIBRARY SCREEN ──────────────────────────────────────────────────────────
-function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSaveRss }) {
+function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
   const inProgress = ARTICLES.find(a => progress[a.id] > 0 && progress[a.id] < 1);
   const rest = ARTICLES.filter(a => a !== inProgress);
 
-  const forYouArticles = (interests && interests.length > 0)
-    ? interests.flatMap(interest =>
-        (INTEREST_FEEDS[interest] || []).flatMap(f =>
-          f.articles.map(a => ({ ...a, feedName: f.name, interest }))
-        )
-      ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i).slice(0, 10)
-    : [];
+  const forYouArticles = React.useMemo(() => {
+    if (!interests || interests.length === 0) return [];
+    return interests.flatMap(interest =>
+      (INTEREST_FEEDS[interest] || []).flatMap(f => {
+        const live = liveArticles && liveArticles[f.id];
+        const articles = live
+          ? live.items.map(a => ({ ...a, feedName: f.name, interest }))
+          : f.articles.map(a => ({ ...a, feedName: f.name, interest }));
+        return articles;
+      })
+    ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i).slice(0, 12);
+  }, [interests, liveArticles]);
 
   return (
     <div className="scroll-area">
@@ -1269,20 +1380,29 @@ function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSa
         <div className="view-title">Calma.</div>
         <div className="view-meta">{ARTICLES.length} saved · {Object.values(progress).filter(p => p > 0 && p < 1).length} in progress</div>
 
-        {forYouArticles.length > 0 && (
+        {(forYouArticles.length > 0 || feedsLoading) && (
           <div className="for-you-section">
-            <div className="for-you-label">From your feeds</div>
+            <div className="for-you-label" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              From your feeds
+              {feedsLoading && <span style={{ fontSize: 11, color: '#C9A876', fontStyle: 'italic', fontWeight: 400 }}>fetching…</span>}
+            </div>
             <div className="for-you-rail">
               {forYouArticles.map(article => {
                 const isSaved = (savedRss || []).includes(article.id);
+                const isLive = article.id && article.id.startsWith('live-');
                 return (
-                  <div key={article.id} className="for-you-card">
-                    <div className="for-you-card-tag">{article.interest}</div>
+                  <div key={article.id} className="for-you-card"
+                    style={{ cursor: article.link ? 'pointer' : 'default' }}
+                    onClick={() => article.link && window.open(article.link, '_blank', 'noopener')}>
+                    <div className="for-you-card-tag">
+                      {article.interest}
+                      {isLive && <span style={{ marginLeft: 5, fontSize: 9, color: '#C9A876', fontWeight: 700 }}>LIVE</span>}
+                    </div>
                     <div className="for-you-card-title">{article.title}</div>
                     <div className="for-you-card-source">{article.feedName}</div>
                     <button
                       className={`for-you-card-save ${isSaved ? 'saved' : ''}`}
-                      onClick={() => !isSaved && onSaveRss(article.id)}
+                      onClick={(e) => { e.stopPropagation(); if (!isSaved) onSaveRss(article.id); }}
                     >{isSaved ? 'Saved' : 'Save'}</button>
                   </div>
                 );
@@ -1810,19 +1930,28 @@ function MarginaliScreen({ highlights, onOpen }) {
 }
 
 // ─── DISCOVER SCREEN ─────────────────────────────────────────────────────────
-function DiscoverScreen({ interests, savedRss, onSaveRss }) {
+function DiscoverScreen({ interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
   const [activeInterest, setActiveInterest] = React.useState('All');
 
-  const allArticles = (interests || []).flatMap(interest =>
-    (INTEREST_FEEDS[interest] || []).flatMap(feed =>
-      feed.articles.map(a => ({ ...a, interest, feedName: feed.name }))
-    )
-  ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i);
+  // Build articles: prefer live RSS items, fall back to static placeholders
+  const allArticles = React.useMemo(() => {
+    return (interests || []).flatMap(interest =>
+      (INTEREST_FEEDS[interest] || []).flatMap(feed => {
+        const live = liveArticles && liveArticles[feed.id];
+        const articles = live
+          ? live.items.map(a => ({ ...a, interest, feedName: feed.name }))
+          : (feed.articles || []).map(a => ({ ...a, interest, feedName: feed.name }));
+        return articles;
+      })
+    ).filter((a, i, arr) => arr.findIndex(x => x.id === a.id) === i);
+  }, [interests, liveArticles]);
 
   const filterOptions = ['All', ...(interests || [])];
   const visible = activeInterest === 'All'
     ? allArticles
     : allArticles.filter(a => a.interest === activeInterest);
+
+  const liveCount = liveArticles ? Object.keys(liveArticles).length : 0;
 
   if (!interests || interests.length === 0) {
     return (
@@ -1841,7 +1970,15 @@ function DiscoverScreen({ interests, savedRss, onSaveRss }) {
       <div className="discover-inner">
         <div className="view-label">Discover</div>
         <div className="view-title">For You</div>
-        <div className="view-meta">{allArticles.length} articles across {(interests || []).length} interests.</div>
+        <div className="view-meta" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>{allArticles.length} articles across {(interests || []).length} interests</span>
+          {feedsLoading && (
+            <span style={{ fontSize: 12, color: '#C9A876', fontStyle: 'italic' }}>· fetching live feeds…</span>
+          )}
+          {!feedsLoading && liveCount > 0 && (
+            <span style={{ fontSize: 12, color: '#7A7569', fontStyle: 'italic' }}>· {liveCount} live sources</span>
+          )}
+        </div>
 
         <div className="topic-filter" style={{ marginTop: 24, marginBottom: 4 }}>
           {filterOptions.map(opt => (
@@ -1856,10 +1993,18 @@ function DiscoverScreen({ interests, savedRss, onSaveRss }) {
         <div className="discover-grid">
           {visible.map(article => {
             const isSaved = (savedRss || []).includes(article.id);
+            const isLive = article.id && article.id.startsWith('live-');
             return (
-              <div key={article.id} className="discover-card" style={{ cursor: 'default' }}>
-                <div className="discover-card-tag">{article.interest}</div>
+              <div key={article.id} className="discover-card" style={{ cursor: article.link ? 'pointer' : 'default' }}
+                onClick={() => article.link && window.open(article.link, '_blank', 'noopener')}>
+                <div className="discover-card-tag">
+                  {article.interest}
+                  {isLive && <span style={{ marginLeft: 6, fontSize: 10, color: '#C9A876', fontWeight: 600, letterSpacing: '0.05em' }}>LIVE</span>}
+                </div>
                 <div className="discover-card-title">{article.title}</div>
+                {article.author && (
+                  <div style={{ fontSize: 12, color: '#7A7569', marginBottom: 6 }}>{article.author}</div>
+                )}
                 <div className="discover-card-excerpt">{article.excerpt}</div>
                 <div className="discover-card-footer">
                   <span style={{ fontStyle: 'italic' }}>{article.feedName}</span>
@@ -1868,14 +2013,14 @@ function DiscoverScreen({ interests, savedRss, onSaveRss }) {
                 <button
                   className={`feed-article-save ${isSaved ? 'saved' : ''}`}
                   style={{ marginTop: 12, width: '100%', textAlign: 'center' }}
-                  onClick={() => !isSaved && onSaveRss(article.id)}
+                  onClick={(e) => { e.stopPropagation(); if (!isSaved) onSaveRss(article.id); }}
                 >{isSaved ? 'Saved to library' : 'Save to library'}</button>
               </div>
             );
           })}
         </div>
 
-        {visible.length === 0 && (
+        {visible.length === 0 && !feedsLoading && (
           <div style={{ textAlign: 'center', padding: '60px 0', color: '#3D3A35', fontSize: 16, fontStyle: 'italic' }}>
             No articles for this topic yet.
           </div>
@@ -2062,6 +2207,8 @@ function App() {
 
   const saveRss = (articleId) => setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
 
+  const { liveArticles, feedsLoading } = useLiveFeeds(interests);
+
   // Keyboard shortcuts
   React.useEffect(() => {
     const fn = (e) => {
@@ -2091,8 +2238,8 @@ function App() {
       );
     }
     switch (view) {
-      case 'library':    return <LibraryScreen onOpen={openArticle} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} />;
-      case 'discover':   return <DiscoverScreen interests={interests} savedRss={savedRss} onSaveRss={saveRss} />;
+      case 'library':    return <LibraryScreen onOpen={openArticle} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
+      case 'discover':   return <DiscoverScreen interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
       case 'marginalia': return <MarginaliScreen highlights={highlights} onOpen={openArticle} />;
       case 'search':     return <SearchScreen highlights={highlights} onOpen={openArticle} />;
       default:           return null;
