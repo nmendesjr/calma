@@ -978,11 +978,15 @@ function useLocalStorage(key, initial) {
     try { const s = localStorage.getItem(key); return s ? JSON.parse(s) : initial; }
     catch { return initial; }
   });
+  const keyRef = React.useRef(key);
+  keyRef.current = key;
   const set = React.useCallback((v) => {
-    const next = typeof v === 'function' ? v(val) : v;
-    setVal(next);
-    try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
-  }, [key, val]);
+    setVal(prev => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      try { localStorage.setItem(keyRef.current, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
   return [val, set];
 }
 
@@ -2184,6 +2188,35 @@ function App() {
   const [progress, setProgress] = useLocalStorage('calma_progress', SEED_PROGRESS);
   const [showAdd, setShowAdd] = React.useState(false);
 
+  // All hooks must be called unconditionally before any early returns (Rules of Hooks)
+  const { liveArticles, feedsLoading } = useLiveFeeds(interests);
+
+  const openArticle = (id) => { setOpenArticleId(id); setView('library'); };
+  const closeArticle = () => setOpenArticleId(null);
+
+  const addHighlight = (hl) => setHighlights(prev => {
+    const filtered = prev.filter(h => !(h.articleId === hl.articleId && h.text === hl.text));
+    return [hl, ...filtered];
+  });
+
+  const saveRss = (articleId) => setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
+
+  // Keyboard shortcuts — must be before early return
+  React.useEffect(() => {
+    if (!onboarded) return;
+    const fn = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape' && openArticleId) closeArticle();
+      if (e.key === 'l' && !openArticleId) setView('library');
+      if (e.key === 'm' && !openArticleId) setView('marginalia');
+      if (e.key === 'd' && !openArticleId) setView('discover');
+      if (e.key === 's' && !openArticleId) setView('search');
+      if (e.key === 'n' && !openArticleId) setShowAdd(true);
+    };
+    document.addEventListener('keydown', fn);
+    return () => document.removeEventListener('keydown', fn);
+  }, [onboarded, openArticleId]);
+
   // Onboarding gate
   if (!onboarded) {
     if (obStep === 'welcome') return <WelcomeScreen onNext={() => setObStep('interests')} />;
@@ -2196,33 +2229,6 @@ function App() {
       />
     );
   }
-
-  const openArticle = (id) => { setOpenArticleId(id); setView('library'); };
-  const closeArticle = () => setOpenArticleId(null);
-
-  const addHighlight = (hl) => setHighlights(prev => {
-    const filtered = prev.filter(h => !(h.articleId === hl.articleId && h.text === hl.text));
-    return [hl, ...filtered];
-  });
-
-  const saveRss = (articleId) => setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
-
-  const { liveArticles, feedsLoading } = useLiveFeeds(interests);
-
-  // Keyboard shortcuts
-  React.useEffect(() => {
-    const fn = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'Escape' && openArticleId) closeArticle();
-      if (e.key === 'l' && !openArticleId) setView('library');
-      if (e.key === 'm' && !openArticleId) setView('marginalia');
-      if (e.key === 'd' && !openArticleId) setView('discover');
-      if (e.key === 's' && !openArticleId) setView('search');
-      if (e.key === 'n' && !openArticleId) setShowAdd(true);
-    };
-    document.addEventListener('keydown', fn);
-    return () => document.removeEventListener('keydown', fn);
-  }, [openArticleId]);
 
   const renderMain = () => {
     if (openArticleId) {
