@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy – Calma</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0A0908;
+      color: #E8E5DD;
+      font-family: Georgia, serif;
+      line-height: 1.75;
+      padding: 60px 24px 120px;
+    }
+    .inner {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+    .logo {
+      font-size: 22px;
+      letter-spacing: -0.3px;
+      margin-bottom: 60px;
+      color: #E8E5DD;
+    }
+    .logo span { color: #C9A876; }
+    h1 {
+      font-size: 32px;
+      font-weight: normal;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+    .updated {
+      font-size: 13px;
+      color: #6B6860;
+      margin-bottom: 48px;
+    }
+    h2 {
+      font-size: 16px;
+      font-weight: normal;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #C9A876;
+      margin: 40px 0 12px;
+    }
+    p, li {
+      font-size: 16px;
+      color: #B0ADA5;
+      margin-bottom: 12px;
+    }
+    ul { padding-left: 20px; }
+    li { margin-bottom: 6px; }
+    a { color: #C9A876; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .divider {
+      border: none;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      margin: 48px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="inner">
+    <div class="logo">Calma<span>.</span></div>
+
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated: May 25, 2026</p>
+
+    <p>Calma is a personal reading library. This policy covers the Calma Chrome extension and the Calma web app at <a href="https://nmendesjr.github.io/calma/">nmendesjr.github.io/calma</a>.</p>
+
+    <hr class="divider">
+
+    <h2>What we collect</h2>
+    <p>When you create an account we collect:</p>
+    <ul>
+      <li>Your <strong>email address</strong> and a hashed version of your password (we never store the plain-text password).</li>
+      <li>Your <strong>reading interests</strong>, selected during onboarding.</li>
+    </ul>
+    <p>When you use the app or extension we store:</p>
+    <ul>
+      <li>The <strong>URLs and titles</strong> of articles you choose to save.</li>
+      <li>Any <strong>highlights and notes</strong> you create inside the reader.</li>
+      <li>Your <strong>reading progress</strong> (scroll position as a percentage) per article.</li>
+    </ul>
+
+    <h2>What we do not collect</h2>
+    <ul>
+      <li>We do not track your browsing history.</li>
+      <li>We do not collect data from pages you visit but do not save.</li>
+      <li>We do not sell, rent, or share your data with any third party.</li>
+      <li>We do not use your data for advertising.</li>
+    </ul>
+
+    <h2>Chrome extension permissions</h2>
+    <p>The Calma extension requests the following browser permissions:</p>
+    <ul>
+      <li><strong>storage</strong> — to keep you signed in between browser sessions by persisting your authentication token locally.</li>
+      <li><strong>activeTab</strong> — to read the URL and title of the page you are currently viewing, only when you click the extension icon.</li>
+      <li><strong>tabs</strong> — to query the current tab in order to pre-fill the save dialog with the article title and URL.</li>
+    </ul>
+    <p>The extension only reads tab information at the moment you open the popup. It does not run in the background or monitor your browsing.</p>
+
+    <h2>Data storage</h2>
+    <p>Your account data is stored in a PostgreSQL database hosted on <a href="https://railway.app" target="_blank" rel="noopener">Railway</a>. Authentication tokens are stored in your browser's local storage and the extension's local storage — they never leave your device except to authenticate requests to the Calma API.</p>
+
+    <h2>Article extraction</h2>
+    <p>When you open a saved article in the Calma reader, the Calma API fetches and parses the article content using Mozilla Readability. The extracted content is cached for up to 24 hours to reduce repeated requests. Calma does not store article content permanently beyond this cache.</p>
+
+    <h2>Data deletion</h2>
+    <p>You can delete individual saved articles, highlights, and notes at any time within the app. To delete your account and all associated data, contact us at the email below.</p>
+
+    <h2>Contact</h2>
+    <p>Questions about this policy or your data: <a href="mailto:privacy@calma.app">nmendesjr@github</a> (open a GitHub issue at <a href="https://github.com/nmendesjr/calma" target="_blank" rel="noopener">github.com/nmendesjr/calma</a>).</p>
+
+    <hr class="divider">
+    <p style="font-size:13px; color:#4A4845;">Calma is a personal project. This policy is written plainly and honestly.</p>
+  </div>
+</body>
+</html>
