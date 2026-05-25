@@ -1699,7 +1699,29 @@ function ReaderSettings({ fontSize, setFontSize, lineHeight, setLineHeight, onCl
 
 // ─── READER SCREEN ───────────────────────────────────────────────────────────
 function ReaderScreen({ articleId, liveArticleStore, onBack, highlights, onAddHighlight, onUpdateNote, progress, setProgress }) {
-  const article = ARTICLES.find(a => a.id === articleId) || (liveArticleStore && liveArticleStore[articleId]);
+  const staticArticle = ARTICLES.find(a => a.id === articleId);
+  const liveArticle = liveArticleStore && liveArticleStore[articleId];
+  const article = staticArticle || liveArticle;
+
+  const [extractedBlocks, setExtractedBlocks] = React.useState(null);
+  const [extracting, setExtracting] = React.useState(false);
+  const [extractError, setExtractError] = React.useState(false);
+
+  // For live articles, fetch full content via Readability extraction
+  React.useEffect(() => {
+    if (!liveArticle?.link || staticArticle) return;
+    setExtracting(true);
+    api(`/articles/extract?url=${encodeURIComponent(liveArticle.link)}`)
+      .then(data => {
+        if (data?.blocks?.length) setExtractedBlocks(data.blocks);
+        else setExtractError(true);
+      })
+      .catch(() => setExtractError(true))
+      .finally(() => setExtracting(false));
+  }, [articleId]);
+
+  const displayBlocks = extractedBlocks || (article?.body) || [];
+
   const articleHighlights = highlights.filter(h => h.articleId === articleId);
   const contentRef = React.useRef(null);
   const scrollRef = React.useRef(null);
@@ -1825,7 +1847,17 @@ function ReaderScreen({ articleId, liveArticleStore, onBack, highlights, onAddHi
               </div>
             </div>
 
-            {article.body.map((block, i) => {
+            {extracting && (
+              <div style={{ color: '#3D3A35', fontStyle: 'italic', fontSize: 15, padding: '24px 0', textAlign: 'center' }}>
+                Fetching article…
+              </div>
+            )}
+            {extractError && !extractedBlocks && (
+              <div style={{ color: '#3D3A35', fontStyle: 'italic', fontSize: 14, padding: '12px 0 24px' }}>
+                Could not extract full content — showing feed preview.
+              </div>
+            )}
+            {displayBlocks.map((block, i) => {
               if (block.kind === 'h2') return <h2 key={i} className="article-h2">{block.text}</h2>;
               if (block.kind === 'p') {
                 const paraHls = articleHighlights.filter(h => block.text.includes(h.text));
