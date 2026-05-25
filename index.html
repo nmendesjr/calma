@@ -904,11 +904,31 @@ const FEED_URLS = {
   'language-log':     'https://languagelog.ldc.upenn.edu/nll/?feed=atom',
 };
 
-const RSS_PROXY = 'https://api.rss2json.com/v1/api.json';
-const RSS_TTL   = 3600000; // 1 hour cache
+// Set this to your Railway URL after deploying the backend.
+// During local dev with `python3 -m http.server 3400`, run the API on port 4000.
+const API_BASE = localStorage.getItem('calma_api_base') || 'http://localhost:4000';
 
-function stripHtml(html = '') {
-  return html.replace(/<[^>]*>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim();
+const RSS_TTL = 3600000; // 1 hour cache
+
+async function api(path, opts = {}) {
+  const token = localStorage.getItem('calma_token');
+  const res = await fetch(API_BASE + path, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  });
+  if (res.status === 204) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function normalizeHighlight(h) {
+  return { id: h.id, articleId: h.article_id, text: h.text, note: h.note, color: h.color, createdAt: h.created_at };
 }
 
 async function fetchFeed(feedId, url) {
@@ -917,29 +937,12 @@ async function fetchFeed(feedId, url) {
     const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
     if (cached && Date.now() - cached.ts < RSS_TTL) return cached.items;
   } catch {}
-
   try {
-    const res = await fetch(`${RSS_PROXY}?rss_url=${encodeURIComponent(url)}&count=8`);
-    const data = await res.json();
-    if (data.status !== 'ok' || !data.items?.length) return null;
-
-    const items = data.items.map((item, i) => {
-      const body = stripHtml(item.content || item.description || '');
-      const excerpt = body.slice(0, 240).trim() + (body.length > 240 ? '…' : '');
-      const minutes = Math.max(3, Math.round(body.split(/\s+/).length / 200));
-      return {
-        id: `live-${feedId}-${i}`,
-        title: (item.title || 'Untitled').replace(/&amp;/g, '&').replace(/&#8217;/g, "'").replace(/&#8220;/g, '"').replace(/&#8221;/g, '"'),
-        author: item.author || data.feed?.title || '',
-        excerpt,
-        link: item.link || '',
-        pubDate: item.pubDate || '',
-        minutes,
-      };
-    });
-
-    try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), items })); } catch {}
-    return items;
+    const items = await api(`/feeds?url=${encodeURIComponent(url)}`);
+    if (!items?.length) return null;
+    const mapped = items.map((item, i) => ({ id: `live-${feedId}-${i}`, ...item }));
+    try { localStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), items: mapped })); } catch {}
+    return mapped;
   } catch {
     return null;
   }
@@ -1053,10 +1056,34 @@ function Icon({ name, size = 18, color = 'currentColor', strokeWidth = 1.5 }) {
   );
 }
 
-// ─── ONBOARDING SCREENS ──────────────────────────────────────────────────────
-function WelcomeScreen({ onNext }) {
-  const [mode, setMode] = React.useState('options');
+// ─── AUTH SCREEN ─────────────────────────────────────────────────────────────
+function AuthScreen({ onAuth }) {
+  const [mode, setMode] = React.useState('login');
+  const [name, setName] = React.useState('');
   const [email, setEmail] = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+
+  const submit = async () => {
+    if (!email || !password) return;
+    setError(''); setLoading(true);
+    try {
+      const result = await api('/auth/' + (mode === 'login' ? 'login' : 'register'), {
+        method: 'POST',
+        body: { email, password, ...(mode === 'register' && name ? { name } : {}) },
+      });
+      localStorage.setItem('calma_token', result.token);
+      onAuth(result.token, result.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onKey = (e) => { if (e.key === 'Enter') submit(); };
+  const switchMode = () => { setMode(m => m === 'login' ? 'register' : 'login'); setError(''); };
 
   return (
     <div className="onboarding">
@@ -1066,52 +1093,28 @@ function WelcomeScreen({ onNext }) {
         <div className="onboarding-title">A quieter<br/>reading life.</div>
         <div className="onboarding-sub">Save articles. Make notes in the margins. Read without the noise.</div>
 
-        {mode === 'options' ? (
-          <>
-            <button className="ob-btn" onClick={onNext}>
-              <svg className="ob-btn-icon" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
-              </svg>
-              Continue with Apple
-            </button>
-            <button className="ob-btn" onClick={onNext}>
-              <svg className="ob-btn-icon" viewBox="0 0 24 24">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-              Continue with Google
-            </button>
-            <button className="ob-btn" onClick={() => setMode('email')}>
-              <svg className="ob-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-                <polyline points="22,6 12,13 2,6"/>
-              </svg>
-              Continue with email
-            </button>
-            <div className="onboarding-divider" />
-            <p style={{ fontSize: 12, color: '#3D3A35', fontStyle: 'italic', lineHeight: 1.65 }}>
-              By continuing you agree to Calma's terms of service and privacy policy. No tracking. No ads. No noise.
-            </p>
-          </>
-        ) : (
-          <>
-            <input
-              className="ob-email-input"
-              type="email"
-              placeholder="your@email.com"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && email.includes('@') && onNext()}
-              autoFocus
-            />
-            <button className="ob-primary-btn" onClick={onNext} disabled={!email.includes('@')}>
-              Continue
-            </button>
-            <button className="ob-link" onClick={() => setMode('options')}>← Back to options</button>
-          </>
-        )}
+        <div style={{ marginTop: 32, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {mode === 'register' && (
+            <input className="ob-email-input" type="text" placeholder="Your name (optional)"
+              value={name} onChange={e => setName(e.target.value)} onKeyDown={onKey} autoFocus={mode === 'register'} />
+          )}
+          <input className="ob-email-input" type="email" placeholder="Email address"
+            value={email} onChange={e => setEmail(e.target.value)} onKeyDown={onKey} autoFocus={mode === 'login'} />
+          <input className="ob-email-input" type="password" placeholder="Password (min. 8 characters)"
+            value={password} onChange={e => setPassword(e.target.value)} onKeyDown={onKey} />
+        </div>
+
+        {error && <div style={{ color: '#E8A0A0', fontSize: 13, marginTop: 10, textAlign: 'center' }}>{error}</div>}
+
+        <button className="ob-primary-btn" onClick={submit}
+          disabled={!email || !password || loading} style={{ marginTop: 16 }}>
+          {loading ? 'Please wait…' : (mode === 'login' ? 'Sign in' : 'Create account')}
+        </button>
+
+        <div className="onboarding-divider" style={{ marginTop: 20 }} />
+        <button className="ob-link" onClick={switchMode} style={{ marginTop: 0 }}>
+          {mode === 'login' ? "No account yet? Create one" : "Already have an account? Sign in"}
+        </button>
       </div>
     </div>
   );
@@ -1681,7 +1684,7 @@ function ReaderScreen({ articleId, onBack, highlights, onAddHighlight, progress,
       const max = el.scrollHeight - el.clientHeight;
       const pct = max > 0 ? el.scrollTop / max : 0;
       setScrollPct(pct);
-      setProgress(prev => ({ ...prev, [articleId]: Math.max(pct, prev[articleId] || 0) }));
+      setProgress(articleId, Math.max(pct, progress[articleId] || 0));
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
@@ -2180,35 +2183,50 @@ function AddArticleModal({ onClose }) {
 
 // ─── ROOT APP ─────────────────────────────────────────────────────────────────
 function App() {
-  const [onboarded, setOnboarded] = useLocalStorage('calma_onboarded', false);
-  const [obStep, setObStep] = React.useState('welcome');
-  const [interests, setInterests] = useLocalStorage('calma_interests', []);
-  const [savedRss, setSavedRss] = useLocalStorage('calma_rss_saved', []);
+  // 'loading' → 'auth' → 'interests' → 'app'
+  const [step, setStep] = React.useState('loading');
+  const [interests, setInterests] = React.useState([]);
+  const [savedRss, setSavedRss] = React.useState([]);
+  const [highlights, setHighlights] = React.useState([]);
+  const [progress, setProgress] = React.useState({});
   const [view, setView] = React.useState('library');
   const [openArticleId, setOpenArticleId] = React.useState(null);
-  const [highlights, setHighlights] = useLocalStorage('calma_highlights', SEED_HIGHLIGHTS);
-  const [progress, setProgress] = useLocalStorage('calma_progress', SEED_PROGRESS);
   const [showAdd, setShowAdd] = React.useState(false);
 
-  // All hooks must be called unconditionally before any early returns (Rules of Hooks)
+  // All hooks unconditionally before early returns
   const { liveArticles, feedsLoading } = useLiveFeeds(interests);
 
-  const openArticle = (id) => { setOpenArticleId(id); setView('library'); };
-  const closeArticle = () => setOpenArticleId(null);
+  // Load user data from API
+  const loadUserData = React.useCallback(async () => {
+    try {
+      const [me, hls, prog, saved] = await Promise.all([
+        api('/me'),
+        api('/me/highlights'),
+        api('/me/progress'),
+        api('/me/saved'),
+      ]);
+      setInterests(me.interests || []);
+      setHighlights((hls || []).map(normalizeHighlight));
+      setProgress(prog || {});
+      setSavedRss(saved || []);
+      setStep(me.interests?.length > 0 ? 'app' : 'interests');
+    } catch {
+      localStorage.removeItem('calma_token');
+      setStep('auth');
+    }
+  }, []);
 
-  const addHighlight = (hl) => setHighlights(prev => {
-    const filtered = prev.filter(h => !(h.articleId === hl.articleId && h.text === hl.text));
-    return [hl, ...filtered];
-  });
-
-  const saveRss = (articleId) => setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
-
-  // Keyboard shortcuts — must be before early return
   React.useEffect(() => {
-    if (!onboarded) return;
+    if (localStorage.getItem('calma_token')) loadUserData();
+    else setStep('auth');
+  }, []);
+
+  // Keyboard shortcuts
+  React.useEffect(() => {
+    if (step !== 'app') return;
     const fn = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'Escape' && openArticleId) closeArticle();
+      if (e.key === 'Escape' && openArticleId) setOpenArticleId(null);
       if (e.key === 'l' && !openArticleId) setView('library');
       if (e.key === 'm' && !openArticleId) setView('marginalia');
       if (e.key === 'd' && !openArticleId) setView('discover');
@@ -2217,20 +2235,62 @@ function App() {
     };
     document.addEventListener('keydown', fn);
     return () => document.removeEventListener('keydown', fn);
-  }, [onboarded, openArticleId]);
+  }, [step, openArticleId]);
 
-  // Onboarding gate
-  if (!onboarded) {
-    if (obStep === 'welcome') return <WelcomeScreen onNext={() => setObStep('interests')} />;
+  // ── Mutations ──────────────────────────────────────────────────────────────
+
+  const saveInterests = async (selected) => {
+    setInterests(selected);
+    try { await api('/me/interests', { method: 'PUT', body: { interests: selected } }); } catch {}
+    setStep('app');
+  };
+
+  const addHighlight = async (hl) => {
+    try {
+      const created = await api('/me/highlights', {
+        method: 'POST',
+        body: { article_id: hl.articleId, text: hl.text, note: hl.note || null, color: hl.color || 'ochre' },
+      });
+      setHighlights(prev => {
+        const filtered = prev.filter(h => !(h.articleId === hl.articleId && h.text === hl.text));
+        return [normalizeHighlight(created), ...filtered];
+      });
+    } catch (err) { console.error('highlight save failed', err); }
+  };
+
+  const updateHighlightNote = async (id, note) => {
+    try {
+      const updated = await api(`/me/highlights/${id}`, { method: 'PATCH', body: { note } });
+      setHighlights(prev => prev.map(h => h.id === id ? normalizeHighlight(updated) : h));
+    } catch {}
+  };
+
+  const updateProgress = async (articleId, value) => {
+    setProgress(prev => ({ ...prev, [articleId]: value }));
+    try { await api(`/me/progress/${articleId}`, { method: 'PUT', body: { progress: value } }); } catch {}
+  };
+
+  const saveRss = async (articleId) => {
+    setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
+    try { await api('/me/saved', { method: 'POST', body: { article_id: articleId } }); } catch {}
+  };
+
+  // ── Routing ────────────────────────────────────────────────────────────────
+
+  if (step === 'loading') {
     return (
-      <InterestsScreen
-        onComplete={(selected) => {
-          setInterests(selected);
-          setOnboarded(true);
-        }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0A0908' }}>
+        <div style={{ fontFamily: 'Spectral, serif', fontSize: 24, color: '#E8E5DD', letterSpacing: '-0.5px' }}>Calma<span style={{ color: '#C9A876' }}>.</span></div>
+      </div>
     );
   }
+
+  if (step === 'auth') return <AuthScreen onAuth={() => loadUserData()} />;
+
+  if (step === 'interests') return <InterestsScreen onComplete={saveInterests} />;
+
+  const openArticle = (id) => { setOpenArticleId(id); setView('library'); };
+  const closeArticle = () => setOpenArticleId(null);
 
   const renderMain = () => {
     if (openArticleId) {
@@ -2240,8 +2300,9 @@ function App() {
           onBack={closeArticle}
           highlights={highlights}
           onAddHighlight={addHighlight}
+          onUpdateNote={updateHighlightNote}
           progress={progress}
-          setProgress={setProgress}
+          setProgress={(articleId, val) => updateProgress(articleId, val)}
         />
       );
     }
@@ -2257,9 +2318,7 @@ function App() {
   return (
     <div className="app">
       <Sidebar view={openArticleId ? '__reader__' : view} setView={(v) => { setOpenArticleId(null); setView(v); }} onAdd={() => setShowAdd(true)} />
-      <main className="main">
-        {renderMain()}
-      </main>
+      <main className="main">{renderMain()}</main>
       <MobileNav view={openArticleId ? '__reader__' : view} setView={(v) => { setOpenArticleId(null); setView(v); }} />
       {showAdd && <AddArticleModal onClose={() => setShowAdd(false)} />}
     </div>
