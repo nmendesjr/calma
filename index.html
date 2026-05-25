@@ -931,6 +931,41 @@ function normalizeHighlight(h) {
   return { id: h.id, articleId: h.article_id, text: h.text, note: h.note, color: h.color, createdAt: h.created_at };
 }
 
+// Convert plain RSS body text into reader paragraph blocks
+function bodyTextToBlocks(text = '') {
+  if (!text.trim()) return [{ kind: 'p', text: 'No preview available for this article.' }];
+  // Split on double newlines first, fall back to chunking long single-paragraph text
+  const rawParas = text.split(/\n\n+/).map(s => s.replace(/\n/g, ' ').trim()).filter(Boolean);
+  const paras = rawParas.length > 1 ? rawParas : chunkText(text, 400);
+  return paras.map(t => ({ kind: 'p', text: t }));
+}
+
+function chunkText(text, targetWords) {
+  const words = text.split(/\s+/);
+  const chunks = [];
+  for (let i = 0; i < words.length; i += targetWords) {
+    chunks.push(words.slice(i, i + targetWords).join(' '));
+  }
+  return chunks;
+}
+
+// Build a reader-compatible article object from a live RSS item
+function liveArticleToReaderArticle(item) {
+  return {
+    id: item.id,
+    title: item.title,
+    author: item.author || item.feedName || '',
+    publication: item.feedName || '',
+    domain: item.feedDomain || '',
+    date: item.pubDate ? new Date(item.pubDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '',
+    minutes: item.minutes || 5,
+    link: item.link || '',
+    body: bodyTextToBlocks(item.bodyText || item.excerpt || ''),
+    isLive: true,
+  };
+}
+}
+
 async function fetchFeed(feedId, url) {
   const cacheKey = `calma_feed_${feedId}`;
   try {
@@ -1363,7 +1398,7 @@ function MobileNav({ view, setView }) {
 }
 
 // ─── LIBRARY SCREEN ──────────────────────────────────────────────────────────
-function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
+function LibraryScreen({ onOpen, onOpenFeed, highlights, progress, interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
   const inProgress = ARTICLES.find(a => progress[a.id] > 0 && progress[a.id] < 1);
   const rest = ARTICLES.filter(a => a !== inProgress);
 
@@ -1400,8 +1435,8 @@ function LibraryScreen({ onOpen, highlights, progress, interests, savedRss, onSa
                 const isLive = article.id && article.id.startsWith('live-');
                 return (
                   <div key={article.id} className="for-you-card"
-                    style={{ cursor: article.link ? 'pointer' : 'default' }}
-                    onClick={() => article.link && window.open(article.link, '_blank', 'noopener')}>
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => onOpenFeed ? onOpenFeed(article) : article.link && window.open(article.link, '_blank', 'noopener')}>
                     <div className="for-you-card-tag">
                       {article.interest}
                       {isLive && <span style={{ marginLeft: 5, fontSize: 9, color: '#C9A876', fontWeight: 700 }}>LIVE</span>}
@@ -1663,8 +1698,8 @@ function ReaderSettings({ fontSize, setFontSize, lineHeight, setLineHeight, onCl
 }
 
 // ─── READER SCREEN ───────────────────────────────────────────────────────────
-function ReaderScreen({ articleId, onBack, highlights, onAddHighlight, progress, setProgress }) {
-  const article = ARTICLES.find(a => a.id === articleId);
+function ReaderScreen({ articleId, liveArticleStore, onBack, highlights, onAddHighlight, onUpdateNote, progress, setProgress }) {
+  const article = ARTICLES.find(a => a.id === articleId) || (liveArticleStore && liveArticleStore[articleId]);
   const articleHighlights = highlights.filter(h => h.articleId === articleId);
   const contentRef = React.useRef(null);
   const scrollRef = React.useRef(null);
@@ -1816,7 +1851,16 @@ function ReaderScreen({ articleId, onBack, highlights, onAddHighlight, progress,
             })}
 
             <div className="article-end">* * *</div>
-            <div className="article-source">Saved from {article.domain} · {article.saved}</div>
+            {article.isLive && article.link ? (
+              <div className="article-source">
+                <a href={article.link} target="_blank" rel="noopener noreferrer"
+                  style={{ color: '#C9A876', textDecoration: 'none', borderBottom: '1px solid rgba(201,168,118,0.3)' }}>
+                  Read full article at {article.domain || article.publication} →
+                </a>
+              </div>
+            ) : (
+              <div className="article-source">Saved from {article.domain} · {article.saved}</div>
+            )}
           </div>
         </div>
       </div>
@@ -1938,7 +1982,7 @@ function MarginaliScreen({ highlights, onOpen }) {
 }
 
 // ─── DISCOVER SCREEN ─────────────────────────────────────────────────────────
-function DiscoverScreen({ interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
+function DiscoverScreen({ interests, savedRss, onSaveRss, liveArticles, feedsLoading, onOpenFeed }) {
   const [activeInterest, setActiveInterest] = React.useState('All');
 
   // Build articles: prefer live RSS items, fall back to static placeholders
@@ -2004,8 +2048,8 @@ function DiscoverScreen({ interests, savedRss, onSaveRss, liveArticles, feedsLoa
             const isSaved = (savedRss || []).includes(article.id);
             const isLive = article.id && article.id.startsWith('live-');
             return (
-              <div key={article.id} className="discover-card" style={{ cursor: article.link ? 'pointer' : 'default' }}
-                onClick={() => article.link && window.open(article.link, '_blank', 'noopener')}>
+              <div key={article.id} className="discover-card" style={{ cursor: 'pointer' }}
+                onClick={() => onOpenFeed ? onOpenFeed(article) : article.link && window.open(article.link, '_blank', 'noopener')}>
                 <div className="discover-card-tag">
                   {article.interest}
                   {isLive && <span style={{ marginLeft: 6, fontSize: 10, color: '#C9A876', fontWeight: 600, letterSpacing: '0.05em' }}>LIVE</span>}
@@ -2192,6 +2236,7 @@ function App() {
   const [view, setView] = React.useState('library');
   const [openArticleId, setOpenArticleId] = React.useState(null);
   const [showAdd, setShowAdd] = React.useState(false);
+  const [liveArticleStore, setLiveArticleStore] = React.useState({});
 
   // All hooks unconditionally before early returns
   const { liveArticles, feedsLoading } = useLiveFeeds(interests);
@@ -2275,6 +2320,13 @@ function App() {
     try { await api('/me/saved', { method: 'POST', body: { article_id: articleId } }); } catch {}
   };
 
+  const openFeedArticle = (item) => {
+    const readerArticle = liveArticleToReaderArticle(item);
+    setLiveArticleStore(prev => ({ ...prev, [readerArticle.id]: readerArticle }));
+    setOpenArticleId(readerArticle.id);
+    setView('library');
+  };
+
   // ── Routing ────────────────────────────────────────────────────────────────
 
   if (step === 'loading') {
@@ -2297,6 +2349,7 @@ function App() {
       return (
         <ReaderScreen
           articleId={openArticleId}
+          liveArticleStore={liveArticleStore}
           onBack={closeArticle}
           highlights={highlights}
           onAddHighlight={addHighlight}
@@ -2307,8 +2360,8 @@ function App() {
       );
     }
     switch (view) {
-      case 'library':    return <LibraryScreen onOpen={openArticle} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
-      case 'discover':   return <DiscoverScreen interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
+      case 'library':    return <LibraryScreen onOpen={openArticle} onOpenFeed={openFeedArticle} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
+      case 'discover':   return <DiscoverScreen interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} onOpenFeed={openFeedArticle} />;
       case 'marginalia': return <MarginaliScreen highlights={highlights} onOpen={openArticle} />;
       case 'search':     return <SearchScreen highlights={highlights} onOpen={openArticle} />;
       default:           return null;
