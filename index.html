@@ -931,6 +931,14 @@ function normalizeHighlight(h) {
   return { id: h.id, articleId: h.article_id, text: h.text, note: h.note, color: h.color, createdAt: h.created_at };
 }
 
+function getDomainFromUrl(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
+}
+
+function isSavedArticle(savedRss, articleId) {
+  return (savedRss || []).some(s => (s.article_id || s) === articleId);
+}
+
 // Convert plain RSS body text into reader paragraph blocks
 function bodyTextToBlocks(text = '') {
   if (!text.trim()) return [{ kind: 'p', text: 'No preview available for this article.' }];
@@ -1309,7 +1317,7 @@ function FeedsScreen({ interests, savedRss, onSaveRss }) {
             <div style={{ fontSize: 13, color: '#5E5B55', fontStyle: 'italic', marginBottom: 0 }}>{activeFeed.description} · {activeFeed.domain}</div>
             <div style={{ marginTop: 0 }}>
               {activeFeed.articles.map(article => {
-                const isSaved = (savedRss || []).includes(article.id);
+                const isSaved = isSavedArticle(savedRss, article.id);
                 return (
                   <div key={article.id} className="feed-article">
                     <div className="feed-article-title">{article.title}</div>
@@ -1397,9 +1405,10 @@ function MobileNav({ view, setView }) {
 }
 
 // ─── LIBRARY SCREEN ──────────────────────────────────────────────────────────
-function LibraryScreen({ onOpen, onOpenFeed, highlights, progress, interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
+function LibraryScreen({ onOpen, onOpenFeed, onOpenWebSaved, highlights, progress, interests, savedRss, onSaveRss, liveArticles, feedsLoading }) {
   const inProgress = ARTICLES.find(a => progress[a.id] > 0 && progress[a.id] < 1);
   const rest = ARTICLES.filter(a => a !== inProgress);
+  const webSaved = (savedRss || []).filter(s => typeof s === 'object' && (s.article_id || '').startsWith('http'));
 
   const forYouArticles = React.useMemo(() => {
     if (!interests || interests.length === 0) return [];
@@ -1430,7 +1439,7 @@ function LibraryScreen({ onOpen, onOpenFeed, highlights, progress, interests, sa
             </div>
             <div className="for-you-rail">
               {forYouArticles.map(article => {
-                const isSaved = (savedRss || []).includes(article.id);
+                const isSaved = isSavedArticle(savedRss, article.id);
                 const isLive = article.id && article.id.startsWith('live-');
                 return (
                   <div key={article.id} className="for-you-card"
@@ -1468,7 +1477,31 @@ function LibraryScreen({ onOpen, onOpenFeed, highlights, progress, interests, sa
           </button>
         )}
 
-        <div className="section-header" style={{ marginTop: inProgress ? 0 : 32 }}>
+        {webSaved.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <div className="section-header" style={{ marginTop: inProgress ? 0 : 32 }}>
+              <span className="section-label">Saved from Web</span>
+              <span className="section-count">{webSaved.length} article{webSaved.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div className="article-list">
+              {webSaved.map(saved => {
+                const domain = getDomainFromUrl(saved.article_id);
+                const savedDate = saved.saved_at ? new Date(saved.saved_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+                return (
+                  <button key={saved.article_id} className="article-row" onClick={() => onOpenWebSaved && onOpenWebSaved(saved)}>
+                    <div className="article-row-top">
+                      <span className="article-pub">{domain}</span>
+                      <span className="article-meta">{savedDate}</span>
+                    </div>
+                    <div className="article-title">{saved.title || saved.article_id}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="section-header" style={{ marginTop: (inProgress || webSaved.length > 0) ? 0 : 32 }}>
           <span className="section-label">Recently Saved</span>
           <span className="section-count">{rest.length} articles</span>
         </div>
@@ -2349,8 +2382,22 @@ function App() {
   };
 
   const saveRss = async (articleId) => {
-    setSavedRss(prev => prev.includes(articleId) ? prev : [...prev, articleId]);
+    setSavedRss(prev => prev.some(s => (s.article_id || s) === articleId) ? prev : [...prev, { article_id: articleId }]);
     try { await api('/me/saved', { method: 'POST', body: { article_id: articleId } }); } catch {}
+  };
+
+  const openWebSaved = (saved) => {
+    const domain = getDomainFromUrl(saved.article_id);
+    const fakeItem = {
+      id: saved.article_id,
+      title: saved.title || saved.article_id,
+      link: saved.article_id,
+      feedName: domain,
+      feedDomain: domain,
+      excerpt: '',
+      bodyText: '',
+    };
+    openFeedArticle(fakeItem);
   };
 
   const openFeedArticle = (item) => {
@@ -2393,7 +2440,7 @@ function App() {
       );
     }
     switch (view) {
-      case 'library':    return <LibraryScreen onOpen={openArticle} onOpenFeed={openFeedArticle} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
+      case 'library':    return <LibraryScreen onOpen={openArticle} onOpenFeed={openFeedArticle} onOpenWebSaved={openWebSaved} highlights={highlights} progress={progress} interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} />;
       case 'discover':   return <DiscoverScreen interests={interests} savedRss={savedRss} onSaveRss={saveRss} liveArticles={liveArticles} feedsLoading={feedsLoading} onOpenFeed={openFeedArticle} />;
       case 'marginalia': return <MarginaliScreen highlights={highlights} onOpen={openArticle} />;
       case 'search':     return <SearchScreen highlights={highlights} onOpen={openArticle} />;
