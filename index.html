@@ -1714,9 +1714,9 @@ function ReaderScreen({ articleId, liveArticleStore, onBack, highlights, onAddHi
     api(`/articles/extract?url=${encodeURIComponent(liveArticle.link)}`)
       .then(data => {
         if (data?.blocks?.length) setExtractedBlocks(data.blocks);
-        else setExtractError(true);
+        else setExtractError(data?.error === 'blocked' ? 'blocked' : 'failed');
       })
-      .catch(() => setExtractError(true))
+      .catch(() => setExtractError('failed'))
       .finally(() => setExtracting(false));
   }, [articleId]);
 
@@ -1854,7 +1854,9 @@ function ReaderScreen({ articleId, liveArticleStore, onBack, highlights, onAddHi
             )}
             {extractError && !extractedBlocks && (
               <div style={{ color: '#3D3A35', fontStyle: 'italic', fontSize: 14, padding: '12px 0 24px' }}>
-                Could not extract full content — showing feed preview.
+                {extractError === 'blocked'
+                  ? 'This publication restricts access — showing feed preview. Read the full piece via the link below.'
+                  : 'Could not fetch full content — showing feed preview.'}
               </div>
             )}
             {displayBlocks.map((block, i) => {
